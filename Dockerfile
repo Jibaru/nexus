@@ -36,6 +36,8 @@ RUN apk upgrade --no-cache && \
     apk add --no-cache dumb-init poppler-utils
 WORKDIR /app
 ENV NODE_ENV=production
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
 
 # Create non-root user for security
 RUN addgroup --system --gid 1001 nodejs && \
