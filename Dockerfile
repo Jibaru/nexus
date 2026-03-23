@@ -1,0 +1,58 @@
+# Dockerfile
+
+# Stage 1: Install dependencies
+FROM node:22.12-alpine3.21 AS deps
+# Install security updates
+RUN apk upgrade --no-cache
+# Install pnpm using corepack with specific version
+RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+WORKDIR /app
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --prod --frozen-lockfile
+
+# Stage 2: Build the application
+FROM node:22.12-alpine3.21 AS builder
+RUN apk upgrade --no-cache
+RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+WORKDIR /app
+
+# Accept build arguments for NEXT_PUBLIC_ environment variables
+# ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+# ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+
+# Accept OPENAI_API_KEY for build time
+# ARG OPENAI_API_KEY
+# ENV OPENAI_API_KEY=$OPENAI_API_KEY
+
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY . .
+RUN pnpm run build
+
+# Stage 3: Production server (Runner)
+FROM node:22.12-alpine3.21 AS runner
+# Install security updates and poppler-utils for PDF to image conversion
+RUN apk upgrade --no-cache && \
+    apk add --no-cache dumb-init poppler-utils
+WORKDIR /app
+ENV NODE_ENV=production
+
+# Create non-root user for security
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 nextjs
+
+# Copy the standalone output from the builder stage
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+
+USER nextjs
+
+EXPOSE 3000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3000', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+
+# Use dumb-init to handle signals properly
+CMD ["dumb-init", "node", "server.js"]
